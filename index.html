@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f5f8b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Fib Levels">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<title>Fib Levels – US Stocks</title>
+<style>
+:root{--bg:#eef2f6;--card:#fff;--tx:#14202e;--mu:#5b6b7c;--bd:#d5dde6;--ac:#1f5f8b;--on:#fff;--sup:#1b7f4b;--res:#b3261e;--hl:#fff1c9}
+@media (prefers-color-scheme:dark){:root{--bg:#0e151d;--card:#17212c;--tx:#e8eef4;--mu:#93a3b4;--bd:#2a3846;--ac:#6db3e0;--on:#0e151d;--sup:#5fd09a;--res:#ff8f86;--hl:#3b3418}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+main{max-width:720px;margin:0 auto;padding:18px 14px 48px}
+h1{font-size:22px;margin:0 0 2px}.sub{color:var(--mu);font-size:14px;margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+input,select,button{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:10px 11px;min-width:0}
+input#q{flex:1 1 180px}
+button{background:var(--ac);color:var(--on);border:0;font-weight:600;cursor:pointer}button:disabled{opacity:.5}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+#sel{width:100%;margin-top:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:8px;margin-top:10px}
+label{font-size:12px;color:var(--mu);display:block}label input{width:100%}
+.tbl{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+td,th{padding:8px 6px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:top}
+th{color:var(--mu);font-weight:500;font-size:12px}
+tr.hl td{background:var(--hl)}tr.px td{background:var(--ac);color:var(--on);font-weight:600}
+.s{color:var(--sup);font-weight:600}.r{color:var(--res);font-weight:600}
+.tag{display:inline-block;font-size:12px;border:1px solid var(--bd);border-radius:99px;padding:1px 8px;margin:2px 4px 2px 0}
+#st{color:var(--mu);font-size:14px;margin-top:8px}
+</style></head><body><main>
+<h1>Fib levels for US stocks</h1>
+<p class="sub">Type a company name or ticker. Levels come from real weekly price history.</p>
+<form class="card" id="f">
+<div class="row"><input id="q" placeholder="AMD, Nvidia, Apple…" autocomplete="off" enterkeyhint="search">
+<select id="yr" aria-label="Timeframe"><option value="1">1 year</option><option value="2">2 years</option><option value="3">3 years</option><option value="4">4 years</option><option value="5">5 years</option><option value="6">6 years</option><option value="7">7 years</option><option value="8">8 years</option><option value="9">9 years</option><option value="10" selected>10 years</option><option value="11">11 years</option><option value="12">12 years</option><option value="13">13 years</option><option value="14">14 years</option><option value="15">15 years</option></select>
+<button id="go" type="submit">Analyse</button></div>
+<select id="sel" hidden aria-label="Choose a match"></select>
+<div id="st"></div></form>
+<div id="out" hidden>
+<div class="card"><b id="nm"></b><p class="sub" id="meta"></p>
+<div class="grid">
+<label>Cycle low<input id="lo" type="number" step="any"></label>
+<label>Cycle high<input id="hi" type="number" step="any"></label>
+<label>Latest-leg low<input id="rl" type="number" step="any"></label>
+<label>Current price<input id="px" type="number" step="any"></label></div>
+<div class="row" style="margin-top:10px"><button id="re" type="button">Recalculate</button></div></div>
+<div class="card"><b>Level ladder</b>
+<p class="sub">Highest to lowest. Shaded rows are confluence zones: two or more levels within 3%.</p>
+<div class="tbl"><table><thead><tr><th>Price</th><th>Role</th><th>Made of</th></tr></thead><tbody id="tb"></tbody></table></div></div>
+<p class="sub">Technical reference only, not financial advice. Fibonacci levels are not guarantees.</p>
+</div>
+<script>
+// ===== Paste your Twelve Data API key between the quotes =====
+const API_KEY="24655d2d335b4cbd83840cf4cb88b884";
+// =============================================================
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const SYM={USD:"$",INR:"₹"};
+let PIV=[],CUR="USD",MATCHES=[];
+const fmt=n=>(SYM[CUR]||CUR+" ")+n.toLocaleString("en-US",{minimumFractionDigits:n>=1000?0:2,maximumFractionDigits:n>=1000?0:2});
+const R=[.236,.382,.5,.618,.786];
+async function td(path,params){
+  const u=new URL("https://api.twelvedata.com/"+path);
+  Object.entries({...params,apikey:API_KEY}).forEach(([k,v])=>u.searchParams.set(k,v));
+  let j;
+  try{j=await (await fetch(u)).json()}catch(e){throw new Error("Could not reach the data service. Check your internet connection.")}
+  if(j.status==="error")throw new Error((j.code===429?"Request limit reached, wait a minute and try again. ":"")+(j.message||"The data service returned an error."));
+  return j;
+}
+async function find(q){
+  const j=await td("symbol_search",{symbol:q,outputsize:30}),seen={};
+  return (j.data||[]).filter(x=>x.country==="United States"&&/stock|etf|depositary/i.test(x.instrument_type||"")&&!/OTC/i.test(x.exchange||"")&&!seen[x.symbol]&&(seen[x.symbol]=1)).slice(0,6);
+}
+async function analyse(m){
+  const sym=m.symbol,label=m.symbol+" · "+m.instrument_name+" ("+m.exchange+")";
+  $("st").textContent="Loading "+sym+"…";
+  const yrs=+$("yr").value;
+  const j=await td("time_series",{symbol:sym,mic_code:m.mic_code,interval:"1week",outputsize:yrs*53+5,order:"ASC"});
+  const cut=Date.now()-yrs*365.25*864e5;
+  const b=(j.values||[]).map(v=>({d:v.datetime,h:+v.high,l:+v.low,c:+v.close})).filter(x=>new Date(x.d).getTime()>=cut&&x.h>0&&x.l>0);
+  if(b.length<Math.min(60,yrs*45))throw new Error("Not enough price history for "+sym+" in this timeframe.");
+  let ih=0,il=0;
+  b.forEach((x,i)=>{if(x.h>b[ih].h)ih=i});
+  b.forEach((x,i)=>{if(i<=ih&&x.l<b[il].l)il=i});
+  let rl=ih;for(let i=Math.max(0,ih-156);i<=ih;i++)if(b[i].l<b[rl].l)rl=i;
+  // Swing pivots (40 weeks each side). Skip the bars already used as cycle high/low and leg low,
+  // so one price point is never counted twice and shown as a fake confluence.
+  // Pivot window: 40 weeks each side (unchanged for 5+ years); smaller for short timeframes so pivots still exist.
+  PIV=[];const w=Math.max(4,Math.min(40,Math.round(b.length/6))),used=new Set([ih,il,rl]);
+  for(let i=w;i<b.length-w;i++){let H=1,L=1;
+    for(let k=i-w;k<=i+w;k++){if(b[k].h>b[i].h)H=0;if(b[k].l<b[i].l)L=0}
+    if(H&&!used.has(i))PIV.push({v:b[i].h,t:"Swing high "+b[i].d.slice(0,7)});
+    if(L&&!used.has(i))PIV.push({v:b[i].l,t:"Swing low "+b[i].d.slice(0,7)});}
+  PIV=PIV.slice(-12);
+  const last=b[b.length-1];CUR=(j.meta&&j.meta.currency)||"USD";
+  $("nm").textContent=label;
+  $("meta").textContent="Weekly candles, "+b[0].d+" to "+last.d+". High "+fmt(b[ih].h)+" (week of "+b[ih].d+"); cycle low "+fmt(b[il].l)+" ("+b[il].d+"); latest-leg low "+fmt(b[rl].l)+" ("+b[rl].d+"). Prices in "+CUR+".";
+  $("lo").value=b[il].l;$("hi").value=b[ih].h;$("rl").value=b[rl].l;$("px").value=last.c;
+  $("out").hidden=false;$("st").textContent="";build();
+}
+function build(){
+  const lo=+$("lo").value,hi=+$("hi").value,rl=+$("rl").value,px=+$("px").value,it=[],pc=p=>(p*100).toFixed(1)+"%";
+  if(lo>0&&hi>lo)R.forEach(p=>it.push({v:hi-(hi-lo)*p,t:"Cycle "+pc(p)+" retracement"}));
+  if(rl>0&&hi>rl&&rl!==lo)R.forEach(p=>it.push({v:hi-(hi-rl)*p,t:"Leg "+pc(p)+" retracement"}));
+  if(rl>0&&hi>rl)[1.272,1.618].forEach(p=>it.push({v:rl+(hi-rl)*p,t:"Extension "+pc(p)}));
+  if(hi>0)it.push({v:hi,t:"Cycle high"});
+  if(lo>0)it.push({v:lo,t:"Cycle low"});
+  if(rl>0&&rl!==lo)it.push({v:rl,t:"Latest-leg low"});
+  PIV.forEach(x=>it.push({v:x.v,t:x.t}));
+  it.sort((a,b)=>b.v-a.v);
+  // Confluence: a level joins the zone above it only if it is within 3% of that zone's TOP,
+  // so a zone can never stretch wider than 3% by chaining.
+  const cl=[];
+  it.forEach(x=>{const c=cl[cl.length-1];
+    if(c&&x.v>=c.hi*.97){c.lo=Math.min(c.lo,x.v);c.tags.push(x.t)}else cl.push({hi:x.v,lo:x.v,tags:[x.t]})});
+  let h="",done=!(px>0);
+  const mark=()=>{h+='<tr class="px"><td colspan="3">Current price '+fmt(px)+"</td></tr>";done=true};
+  cl.forEach(c=>{
+    if(!done&&c.hi<px)mark();
+    const mid=(c.hi+c.lo)/2,at=px>0&&px<=c.hi*1.01&&px>=c.lo*.99;
+    const role=!(px>0)?"":at?"At price":mid>px?'<span class="r">Resistance</span>':'<span class="s">Support</span>';
+    const p=c.hi-c.lo>c.hi*.002?fmt(c.lo)+" – "+fmt(c.hi):fmt(mid);
+    h+="<tr"+(c.tags.length>1?' class="hl"':"")+"><td>"+p+"</td><td>"+role+"</td><td>"+c.tags.map(t=>'<span class="tag">'+esc(t)+"</span>").join("")+"</td></tr>";
+  });
+  if(!done)mark();
+  $("tb").innerHTML=h;
+}
+async function run(fn){
+  $("go").disabled=$("sel").disabled=true;
+  try{await fn()}catch(err){$("st").textContent=err.message||"Something went wrong. Check your connection and try again."}
+  finally{$("go").disabled=$("sel").disabled=false}
+}
+$("f").addEventListener("submit",e=>{
+  e.preventDefault();
+  const q=$("q").value.trim();if(!q)return;
+  if(/PASTE_YOUR/.test(API_KEY)){$("st").textContent="Add your Twelve Data API key in index.html first (see README).";return}
+  run(async()=>{
+    $("sel").hidden=true;$("st").textContent="Searching…";
+    MATCHES=await find(q);
+    if(!MATCHES.length){$("st").textContent="No US stock found for “"+q+"”. Try the ticker symbol.";return}
+    const sel=$("sel");sel.innerHTML="";
+    MATCHES.forEach((x,i)=>{const o=document.createElement("option");o.value=i;o.textContent=x.symbol+" · "+x.instrument_name+" ("+x.exchange+")";sel.appendChild(o)});
+    sel.hidden=MATCHES.length<2;
+    await analyse(MATCHES[0]);
+  });
+});
+$("sel").addEventListener("change",()=>run(()=>analyse(MATCHES[+$("sel").value])));
+$("yr").addEventListener("change",()=>{if(!$("out").hidden&&MATCHES.length)run(()=>analyse(MATCHES[+$("sel").value||0]))});
+$("re").onclick=build;
+</script>
+<script>
+if("serviceWorker" in navigator){window.addEventListener("load",()=>{navigator.serviceWorker.register("sw.js").catch(()=>{})})}
+</script>
+</main></body></html>
